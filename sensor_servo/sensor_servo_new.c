@@ -8,6 +8,12 @@
 #include <bl_pwm.h>     // For PWM handling
 #include <bl_timer.h>   // For precise microsecond timing
 
+#include <stdio.h>
+
+#include <FreeRTOS.h>
+#include <task.h>
+#include <string.h>
+
 // Define entry sensor pins
 #define TRIG_PIN_ENTRY 4             // GPIO pin for the entry sensor trigger
 #define ECHO_PIN_ENTRY 5             // GPIO pin for the entry sensor echo
@@ -84,10 +90,24 @@ float measure_distance(uint8_t trig_pin, uint8_t echo_pin) {
     return distance;
 }
 
-// Task to handle entry and exit sensors and barrier logic
-void task_sensor_servo(void *pvParameters) {
-    printf("Sensor and Servo task started\r\n");
+void initialize_servo() {
+    bl_pwm_init(SERVO_PWM_CHANNEL, SERVO_PIN, BASE_PWM_FREQUENCY);
+    PWM_Channel_Set_Div(SERVO_PWM_CHANNEL, PWM_CLOCK_DIVIDER);
+    bl_pwm_start(SERVO_PWM_CHANNEL);
+    printf("Servo motor initialized.\r\n");
+}
 
+
+void open_barrier() {
+    printf("Opening barrier...\r\n");
+    bl_pwm_set_duty(SERVO_PWM_CHANNEL, SERVO_MIN_DUTY); 
+    vTaskDelay(3000 / portTICK_PERIOD_MS);            
+    printf("Closing barrier...\r\n");
+    bl_pwm_set_duty(SERVO_PWM_CHANNEL, SERVO_MAX_DUTY); 
+}
+
+// Function to initialize GPIO pins for sensors
+void initialize_sensors() {
     // Initialize entry sensor pins
     bl_gpio_enable_output(TRIG_PIN_ENTRY, 0, 0); // Set TRIG_PIN_ENTRY as output
     bl_gpio_enable_input(ECHO_PIN_ENTRY, 1, 0);  // Set ECHO_PIN_ENTRY as input with pull-up
@@ -96,57 +116,57 @@ void task_sensor_servo(void *pvParameters) {
     bl_gpio_enable_output(TRIG_PIN_EXIT, 0, 0);  // Set TRIG_PIN_EXIT as output
     bl_gpio_enable_input(ECHO_PIN_EXIT, 1, 0);   // Set ECHO_PIN_EXIT as input with pull-up
 
+    printf("Sensors initialized.\r\n");
+}
+
+// Function to handle car entry logic
+void handle_car_entry() {
+    float distance_entry = measure_distance(TRIG_PIN_ENTRY, ECHO_PIN_ENTRY);
+    if (distance_entry > 0 && distance_entry < 20) {
+        car_count++; // Increment car count
+        printf("Car entered. Current count: %d\r\n", car_count);
+        open_barrier();
+    }
+}
+
+// Function to handle car exit logic
+void handle_car_exit() {
+    float distance_exit = measure_distance(TRIG_PIN_EXIT, ECHO_PIN_EXIT);
+    if (distance_exit > 0 && distance_exit < 20) {
+        if (car_count > 0) {
+            car_count--; // Decrement car count
+            printf("Car exited. Current count: %d\r\n", car_count);
+        } else {
+            printf("Error: Exit detected but no cars inside.\r\n");
+        }
+    }
+}
+
+// Main sensor and servo handling function
+void sensor_servo_logic() {
+    if (car_count >= MAX_CARS) {
+        printf("Parking Full! No more cars allowed.\r\n");
+    } else {
+        handle_car_entry();
+    }
+    handle_car_exit();
+}
+
+
+
+// Task to handle entry and exit sensors and barrier logic
+void task_sensor_servo(void *pvParameters) {
+
+    initialize_sensors();
     // Initialize the PWM for the servo motor at the base frequency
-    bl_pwm_init(SERVO_PWM_CHANNEL, SERVO_PIN, BASE_PWM_FREQUENCY);
-    PWM_Channel_Set_Div(SERVO_PWM_CHANNEL, PWM_CLOCK_DIVIDER);
-    bl_pwm_start(SERVO_PWM_CHANNEL);
+    initialize_servo();
 
     while (1) {
-        // Check if parking is full
-        if (car_count >= MAX_CARS) {
-            printf("Parking Full! No more cars allowed.\r\n");
-        } else {
-            // Measure entry sensor distance
-            float distance_entry = measure_distance(TRIG_PIN_ENTRY, ECHO_PIN_ENTRY);
-            if (distance_entry > 0 && distance_entry < 20) {
-                car_count++; // Increment car count
-                printf("Car entered. Current count: %d\r\n", car_count);
-
-                // Open barrier
-                printf("Opening the barrier...\r\n");
-                bl_pwm_set_duty(SERVO_PWM_CHANNEL, SERVO_MIN_DUTY);
-                vTaskDelay(3000 / portTICK_PERIOD_MS); // Keep barrier open for 3 seconds
-
-                // Close barrier
-                printf("Closing the barrier...\r\n");
-                bl_pwm_set_duty(SERVO_PWM_CHANNEL, SERVO_MAX_DUTY);
-            }
-        }
-
-        // Measure exit sensor distance
-        float distance_exit = measure_distance(TRIG_PIN_EXIT, ECHO_PIN_EXIT);
-        if (distance_exit > 0 && distance_exit < 20) {
-            if (car_count > 0) {
-                car_count--; // Decrement car count
-                printf("Car exited. Current count: %d\r\n", car_count);
-
-                // Open barrier
-                printf("Opening the barrier...\r\n");
-                bl_pwm_set_duty(SERVO_PWM_CHANNEL, SERVO_MIN_DUTY);
-                vTaskDelay(3000 / portTICK_PERIOD_MS); // Keep barrier open for 3 seconds
-
-                // Close barrier
-                printf("Closing the barrier...\r\n");
-                bl_pwm_set_duty(SERVO_PWM_CHANNEL, SERVO_MAX_DUTY);
-                
-            } else {
-                printf("Error: Exit detected but no cars inside.\r\n");
-            }
-        }
-
+        sensor_servo_logic();
         // Wait for 3 seconds before the next measurement
         vTaskDelay(3000 / portTICK_PERIOD_MS);
     }
 
     vTaskDelete(NULL); // Should never happen
 }
+
