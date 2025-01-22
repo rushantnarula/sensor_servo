@@ -10,7 +10,7 @@
 
 #include <bl_gpio.h>
 #include <bl_pwm.h>
-
+#include <stdbool.h>
 #include "cJSON.h"
 #include "cgi.h"
 #include "parking.h"
@@ -18,9 +18,40 @@
 
 static char last_message[256] = {0};  // Holds the latest message for display
 
+typedef struct {
+    char pin[PIN_LENGTH + 1];
+    bool is_valid;
+} Reservation;
+
+#define MAX_RESERVATIONS 10
+Reservation reservations[MAX_RESERVATIONS] = {0}; // Array to store reservations
+
+static int add_reservation(const char *new_pin) {
+    for (int i = 0; i < MAX_RESERVATIONS; i++) {
+        if (!reservations[i].is_valid) { // Find an empty slot
+            strncpy(reservations[i].pin, new_pin, PIN_LENGTH);
+            reservations[i].pin[PIN_LENGTH] = '\0';
+            reservations[i].is_valid = true;
+            return 1; // Successfully added
+        }
+    }
+    return 0; // No space left for new reservations
+}
+
+
+static int validate_and_remove_reservation(const char *entered_pin) {
+    for (int i = 0; i < MAX_RESERVATIONS; i++) {
+        if (reservations[i].is_valid && strcmp(reservations[i].pin, entered_pin) == 0) {
+            reservations[i].is_valid = false; // Mark the reservation as used
+            return 1; // PIN is valid
+        }
+    }
+    return 0; // PIN is invalid
+}
+
+
 /* Check availability handler */
 static const char *cgi_handler_check_availability(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]) {
-    printf("[DEBUG] Check availability handler called.\r\n");
 
     // 1. Build JSON
     cJSON *json_response = cJSON_CreateObject();
@@ -44,12 +75,19 @@ static const char *cgi_handler_check_availability(int iIndex, int iNumParams, ch
 }
 
 char pin[PIN_LENGTH + 1] = {0};
+
+
 /* Reserve spot handler */
 static const char *cgi_handler_reserve(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]) {
-    printf("[DEBUG] Reserve spot handler called.\r\n");
     //char pin[PIN_LENGTH + 1] = {0};
+    if (car_count < MAX_CARS) {
     generate_pin(pin);  // Generate a random PIN
+    add_reservation(pin);
     car_count++;
+    }
+    else{
+    return "/reserve_spot.html";    
+    }
 
     return "/reserve_spot.html";
 
@@ -77,14 +115,16 @@ static const char *cgi_handler_enter(int iIndex, int iNumParams, char *pcParam[]
     // If the user has no reservation, check availability
     if (!has_reservation) {
         if (car_count < MAX_CARS) {
+        
             car_count++;  // Decrease available spots
             snprintf(last_message, sizeof(last_message), "Spot available. Welcome!");
             open_barrier();
         } else {
             snprintf(last_message, sizeof(last_message), "No spots available. Please try later.");
         }
-    } else {  // User has a reservation
-        if (strcmp(entered_pin, pin) == 0) {
+    }
+    else {  // User has a reservation
+        if (validate_and_remove_reservation(entered_pin)) {
             snprintf(last_message, sizeof(last_message), "Valid PIN. Welcome!");
             open_barrier();
         } else {
@@ -152,7 +192,7 @@ int fs_open_custom(struct fs_file *file, const char *name) {
     }
 
 
-    if (car_count < MAX_CARS) {  // Check real backend availability
+    if (car_count <= MAX_CARS) {  // Check real backend availability
        snprintf(response, 512,
                  "<html><body>"
                  "<h1>Reservation Successful</h1>"
@@ -205,12 +245,9 @@ int fs_open_custom(struct fs_file *file, const char *name) {
             "    const pin = prompt('Enter Reservation PIN:');"
             "    window.location.href = `/enter_parking?reserved=1&pin=${pin}`;"
             "  } else {"
-            "    window.location.href = `/enter_parking?reserved=0`;;"
+            "    window.location.href = `/enter_parking?reserved=0`;"
             "  }"
             "}"
-            "setInterval(() => { "
-            "  if (!userInteracted) location.reload(); "
-            "}, 5000);"
             "</script>"
             "</body></html>",
             MAX_CARS - car_count
