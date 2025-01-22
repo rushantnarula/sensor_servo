@@ -122,7 +122,7 @@ void initialize_sensors() {
 // Function to handle car entry logic
 void handle_car_entry() {
     float distance_entry = measure_distance(TRIG_PIN_ENTRY, ECHO_PIN_ENTRY);
-    if (distance_entry > 0 && distance_entry < 20) {
+    if (distance_entry > 0 && distance_entry < 10) {
         car_count++; // Increment car count
         printf("Car entered. Current count: %d\r\n", car_count);
         open_barrier();
@@ -132,7 +132,7 @@ void handle_car_entry() {
 // Function to handle car exit logic
 void handle_car_exit() {
     float distance_exit = measure_distance(TRIG_PIN_EXIT, ECHO_PIN_EXIT);
-    if (distance_exit > 0 && distance_exit < 20) {
+    if (distance_exit > 0 && distance_exit < 10) {
         if (car_count > 0) {
             car_count--; // Decrement car count
             printf("Car exited. Current count: %d\r\n", car_count);
